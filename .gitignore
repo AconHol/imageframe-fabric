@@ -23,3 +23,8 @@ client-run.log
 # Gradle/server runtime logs
 logs/
 *.log.gz
+
+# Local debug output
+server-check.txt
+zombie-chunks.txt
+i18n-check.txt
