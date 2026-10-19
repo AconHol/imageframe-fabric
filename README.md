@@ -248,6 +248,7 @@ Fabric 服务端没有 Bukkit 权限系统，本模组把原插件的权限节�
 | `handleAnimatedMapsOnMainThread` | `true` | 动画帧生成线程策略 |
 | `maxAnimationFrames` | `600` | 动画最大帧数 |
 | `viewAnimatedMaps` | `true` | 服务器默认是否播放动画（玩家偏好可覆盖） |
+| `frameAnimationMode` | `smooth` | 展示框动画下发方式：`smooth` = 预发送每帧假地图 ID + 每 tick 仅切换展示框物品（原插件方案，带宽低）；`color` = 每 2 tick 直接发地图颜色（兼容模式）。反射不可用时自动回退到 `color` |
 | `debugLogging` | `false` | 调试日志 |
 | `invisibleFrame.maxConversionsPerSplash` | `8` | 一次隐身药水最多转化数量 |
 | `invisibleFrame.glowEmptyFrames` | `true` | 空隐形框显示发光效果 |
@@ -309,7 +310,8 @@ config/imageframe/
   `storagemigrate` 实现为“从另一个存储目录导入”，`adminmigrate` 支持从原插件文件后端的真实数据迁移。
 - 与保护类插件（领地/锁箱）的交互检查：Fabric 无统一 API，未实现；可用原版权限或保护模组自行限制。
 - PlaceholderAPI / 插件 API 事件 / bStats 统计：属 Bukkit 生态，未实现（无对应功能需求）。
-- 动画实现：在服务端预计算全部帧，通过“假地图 ID + 实体元数据逐 tick 切换”下发；网络开销略高于原插件客户端方案。
+- 动画实现：与原插件一致的“假地图 ID”方案——每个动画帧预分配一个假地图 ID，颜色只向附近玩家发送一次；播放时每 tick 仅发实体元数据包切换展示框物品（几十字节/帧），不是每帧发送 16KB 颜色。若 `ItemFrame.DATA_ITEM` 反射失败或配置 `frameAnimationMode: "color"`，自动回退为每 2 tick 发送真实地图颜色。
+- 动画兼容/例外：`viewAnimatedMaps=false` 的玩家看到静态首帧；标记编辑中的玩家临时显示真实地图物品；暂停时使用 lookbehind 找最近有效帧避免闪烁；图片刷新/删除时会把展示框恢复为真实物品并清空假帧缓存。手持动画地图仍通过真实地图颜色刷新（每 2 tick）。
 - 管理员的 `其他玩家:图片名` 前缀写法：本实现按全局名称解析图片（忽略前缀），未支持替他人操作的前缀语法。
 - `list` 的控制台用法、`adminsetcreator` 的离线玩家名等细节与原插件略有差异。
 

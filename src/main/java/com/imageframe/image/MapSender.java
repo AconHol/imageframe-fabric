@@ -3,6 +3,7 @@ package com.imageframe.image;
 import com.imageframe.ImageFrameFabric;
 import com.imageframe.ImageFrameMod;
 import com.imageframe.util.ItemsX;
+import net.minecraft.core.component.DataComponents;
 import com.imageframe.util.Palette;
 import net.minecraft.network.protocol.game.ClientboundMapItemDataPacket;
 import net.minecraft.network.protocol.game.ClientboundSetEntityDataPacket;
@@ -45,6 +46,8 @@ public final class MapSender {
     private final Map<UUID, Map<Integer, Long>> lastOverlaySent = new HashMap<>();
     private final Map<Integer, CachedBase> baseColorCache = new HashMap<>();
     private EntityDataAccessor<ItemStack> itemFrameDataItem;
+    private volatile boolean smoothAnimationUnavailable;
+    private boolean smoothAnimationWarningLogged;
 
     private record CachedBase(byte[] colors, long tick) {
     }
@@ -146,7 +149,12 @@ public final class MapSender {
         if (accessor == null) {
             return;
         }
-        ItemStack stack = ItemsX.filledMap(fakeMapId);
+        ItemStack stack = frame.getItem().copy();
+        stack.set(DataComponents.MAP_ID, new MapId(fakeMapId));
+        sendItemPacket(player, frame, accessor, stack);
+    }
+
+    private void sendItemPacket(ServerPlayer player, ItemFrame frame, EntityDataAccessor<ItemStack> accessor, ItemStack stack) {
         var value = SynchedEntityData.DataValue.create(accessor, stack);
         List<SynchedEntityData.DataValue<?>> values = new ArrayList<>();
         values.add(value);
@@ -162,7 +170,11 @@ public final class MapSender {
                 EntityDataAccessor<ItemStack> accessor = (EntityDataAccessor<ItemStack>) field.get(null);
                 itemFrameDataItem = accessor;
             } catch (ReflectiveOperationException e) {
-                ImageFrameFabric.LOGGER.error("Unable to access ItemFrame.DATA_ITEM", e);
+                smoothAnimationUnavailable = true;
+                if (!smoothAnimationWarningLogged) {
+                    smoothAnimationWarningLogged = true;
+                    ImageFrameFabric.LOGGER.warn("Unable to access ItemFrame.DATA_ITEM; falling back to colour-based frame animation", e);
+                }
             }
         }
         return itemFrameDataItem;
@@ -194,12 +206,21 @@ public final class MapSender {
                 }
             } else {
                 int current = image.currentTick();
+                boolean smooth = smoothAnimationEnabled();
                 for (FrameTracker.TrackedFrame frame : frames) {
-                    animationSweep(frame, image, current, tick);
+                    if (smooth) {
+                        smoothAnimationSweep(frame, image, current, tick);
+                    } else {
+                        colorAnimationSweep(frame, image, current, tick);
+                    }
+                }
+                if (mod.config().debugLogging && tick % 200 == 0) {
+                    ImageFrameFabric.LOGGER.info("Animated image '{}' tick={} mode={} trackedFrames={}",
+                            image.name(), current, smooth ? "smooth" : "color", frames.size());
                 }
             }
         }
-        if (tick % 5 == 0) {
+        if (tick % 2 == 0) {
             heldMapSweep(server, tick);
         }
         if (tick % 2 == 0) {
@@ -229,7 +250,7 @@ public final class MapSender {
         }
     }
 
-    private void animationSweep(FrameTracker.TrackedFrame tracked, ImageMap image, int currentTick, long tick) {
+    private void colorAnimationSweep(FrameTracker.TrackedFrame tracked, ImageMap image, int currentTick, long tick) {
         ServerLevel level = tracked.level();
         ItemFrame frame = tracked.frame();
         if (!frame.isAlive()) {
@@ -264,6 +285,95 @@ public final class MapSender {
                 send(player, mapId, colors, image.decorations(tile));
             }
         }
+    }
+
+    private boolean smoothAnimationEnabled() {
+        if (smoothAnimationUnavailable) {
+            return false;
+        }
+        String mode = mod.config().frameAnimationMode;
+        if (mode != null && "color".equalsIgnoreCase(mode)) {
+            return false;
+        }
+        if (itemFrameDataItem() == null) {
+            smoothAnimationUnavailable = true;
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Smooth animation: the client already has every animation frame cached under a "fake" map id,
+     * so each tick we only change the item frame's displayed item to the map id of the current frame.
+     * This is the same technique as the original ImageFrame plugin and only sends a few dozen bytes
+     * per frame instead of a full 16 KiB map colour patch.
+     */
+    private void smoothAnimationSweep(FrameTracker.TrackedFrame tracked, ImageMap image, int currentTick, long tick) {
+        ServerLevel level = tracked.level();
+        ItemFrame frame = tracked.frame();
+        if (!frame.isAlive()) {
+            return;
+        }
+        int tile = tracked.tile();
+        int fakeMapId = image.fakeMapIdFor(tile, currentTick, image.paused());
+        if (fakeMapId < 0) {
+            // This tile did not change in the current frame; the client keeps showing the previous one.
+            return;
+        }
+        for (ServerPlayer player : level.players()) {
+            if (player.distanceToSqr(frame) > ANIMATION_VIEW_DISTANCE_SQR) {
+                continue;
+            }
+            if (!viewAnimatedMaps(player)) {
+                // Show the first frame as a static image for players who disabled animation.
+                if (tick % 20 == 0) {
+                    sendRealItem(player, frame);
+                }
+                continue;
+            }
+            if (mod.markers().isEditing(player)) {
+                // Marker placement needs the real map item on the client.
+                if (tick % 10 == 0) {
+                    sendRealItem(player, frame);
+                }
+                continue;
+            }
+            Set<Integer> known = knownFakeIds.computeIfAbsent(player.getUUID(), key -> new HashSet<>());
+            if (!known.contains(fakeMapId)) {
+                sendAllAnimationFrames(player, image);
+            }
+            sendFakeItem(player, frame, fakeMapId);
+        }
+    }
+
+    public void sendRealItem(ServerPlayer player, ItemFrame frame) {
+        EntityDataAccessor<ItemStack> accessor = itemFrameDataItem();
+        if (accessor == null) {
+            return;
+        }
+        sendItemPacket(player, frame, accessor, frame.getItem().copy());
+    }
+
+    /**
+     * Reverts any client-side fake animation items to the real item and forgets cached frames.
+     * Called when an image is refreshed or deleted so clients do not keep a stale frame.
+     */
+    public void restoreFrameItems(ImageMap image) {
+        if (image == null) {
+            return;
+        }
+        for (FrameTracker.TrackedFrame tracked : mod.frames().framesForImage(image.index())) {
+            ItemFrame frame = tracked.frame();
+            if (!frame.isAlive()) {
+                continue;
+            }
+            for (ServerPlayer player : tracked.level().players()) {
+                if (player.distanceToSqr(frame) <= STATIC_VIEW_DISTANCE_SQR) {
+                    sendRealItem(player, frame);
+                }
+            }
+        }
+        invalidate(image);
     }
 
     private void heldMapSweep(MinecraftServer server, long tick) {

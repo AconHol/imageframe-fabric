@@ -1,0 +1,9 @@
+difficulty => 'The difficulty is Peaceful'
+gamerule doMobSpawning => 'Incorrect argument for commandgamerule doMobSpawning<--[HERE]'
+execute if entity @e[type=minecraft:zombie_horse] => 'Test failed'
+execute if entity @e[type=minecraft:skeleton_horse] => 'Test failed'
+execute if entity @e[type=minecraft:horse] => 'Test failed'
+execute if entity @e[type=minecraft:zombie] => 'Test failed'
+execute if entity @e[type=minecraft:item_frame] => 'Test failed'
+time query daytime => "Can't find element 'minecraft:daytime' of type 'minecraft:timeline'...ry daytime<--[HERE]"
+weather query => 'Incorrect argument for commandweather query<--[HERE]'

@@ -44,6 +44,7 @@ public final class Config {
     public boolean handleAnimatedMapsOnMainThread = true;
     public int maxAnimationFrames = 600;
     public boolean viewAnimatedMaps = true;
+    public String frameAnimationMode = "smooth";
     public boolean debugLogging = false;
     public InvisibleFrame invisibleFrame = new InvisibleFrame();
     public boolean checkForUpdates = false;
@@ -94,6 +95,8 @@ public final class Config {
     }
 
     private void sanitize() {
+        if (frameAnimationMode == null) frameAnimationMode = "smooth";
+        if (!"smooth".equalsIgnoreCase(frameAnimationMode) && !"color".equalsIgnoreCase(frameAnimationMode)) frameAnimationMode = "smooth";
         if (language == null) language = "zh_cn";
         language = language.toLowerCase(Locale.ROOT);
         if (maxSize < 1) maxSize = 1;

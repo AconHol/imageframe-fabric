@@ -188,6 +188,7 @@ public final class ImageMapManager {
     public void remove(ImageMap image) {
         images.remove(image);
         byName.remove(image.name().toLowerCase(java.util.Locale.ROOT));
+        mod.sender().restoreFrameItems(image);
         mod.frames().removeForImage(image.index());
         if (image.isOverlay()) {
             mod.sender().restoreOverlay(image);
@@ -198,6 +199,7 @@ public final class ImageMapManager {
     }
 
     public void onImageUpdated(ImageMap image) {
+        mod.sender().restoreFrameItems(image);
         mod.sender().invalidate(image);
     }
 

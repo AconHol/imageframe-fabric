@@ -416,6 +416,10 @@ public final class ImageMap {
 
     /** Fake map id used by the client side animation trick, -1 if this frame is unchanged. */
     public int fakeMapIdFor(int tile, int tick) {
+        return fakeMapIdFor(tile, tick, false);
+    }
+
+    public int fakeMapIdFor(int tile, int tick, boolean lookbehind) {
         int[][] ids = animationFakeIds;
         if (ids == null || tile < 0 || tile >= ids.length) {
             return -1;
@@ -429,7 +433,21 @@ public final class ImageMap {
         if (distinct >= frames.length) {
             distinct = frames.length - 1;
         }
-        return frames[distinct];
+        int mapId = frames[distinct];
+        if (mapId >= 0 || !lookbehind) {
+            return mapId;
+        }
+        for (int i = distinct; i >= 0; i--) {
+            if (frames[i] >= 0) {
+                return frames[i];
+            }
+        }
+        for (int i = distinct + 1; i < frames.length; i++) {
+            if (frames[i] >= 0) {
+                return frames[i];
+            }
+        }
+        return -1;
     }
 
     public int[] allFakeMapIds() {
